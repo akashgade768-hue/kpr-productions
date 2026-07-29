@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
-import { supabase, isSupabaseLive, signInWithGoogleApi, sendRealOtpApi, verifyRealOtpApi } from '../lib/supabase';
+import { supabase, isSupabaseLive, signInWithGoogleApi } from '../lib/supabase';
+import { sendRealInboxOtp, sendRealMobileSmsOtp, verifyActiveOtp } from '../lib/realAuth';
 
 interface AuthContextType {
   user: User | null;
@@ -8,6 +9,9 @@ interface AuthContextType {
   isOtpPending: boolean;
   otpTarget: string;
   otpType: 'email' | 'phone';
+  activeOtpCode: string;
+  otpSmsUri?: string;
+  otpDispatchMethod?: string;
   loginStep1: (email: string, pass: string) => Promise<{ success: boolean; requiresOtp: boolean; message?: string }>;
   loginWithPhone: (phone: string) => Promise<{ success: boolean; requiresOtp: boolean; message?: string }>;
   loginWithGoogle: () => Promise<{ success: boolean; message?: string }>;
@@ -56,6 +60,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [pendingUser, setPendingUser] = useState<User | null>(null);
   const [otpTarget, setOtpTarget] = useState('');
   const [otpType, setOtpType] = useState<'email' | 'phone'>('email');
+  const [activeOtpCode, setActiveOtpCode] = useState('');
+  const [otpSmsUri, setOtpSmsUri] = useState<string | undefined>(undefined);
+  const [otpDispatchMethod, setOtpDispatchMethod] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     if (user) {
@@ -65,7 +72,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
-  // Real Supabase Auth state listener
+  // Real Supabase Auth listener
   useEffect(() => {
     if (!isSupabaseLive) return;
 
@@ -89,7 +96,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => subscription.unsubscribe();
   }, []);
 
-  // Email + Password login flow
+  // Email login step -> triggers real OTP dispatch
   const loginStep1 = async (email: string, pass: string) => {
     const cleanEmail = email.trim().toLowerCase();
     let foundUser = DEMO_USERS[cleanEmail];
@@ -117,7 +124,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, requiresOtp: false, message: 'Invalid password. Minimum 3 characters.' };
     }
 
-    // Check trusted device token
+    // Check 30-day trusted device
     const trustedToken = localStorage.getItem(`kpr_trusted_${cleanEmail}`);
     if (trustedToken && new Date(trustedToken) > new Date()) {
       setUser(foundUser);
@@ -129,11 +136,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setOtpType('email');
     setIsOtpPending(true);
 
-    await sendRealOtpApi(cleanEmail, 'email');
-    return { success: true, requiresOtp: true };
+    const otpResult = await sendRealInboxOtp(cleanEmail);
+    setActiveOtpCode(otpResult.code);
+    setOtpDispatchMethod(otpResult.method);
+    setOtpSmsUri(undefined);
+
+    return { success: true, requiresOtp: true, message: otpResult.message };
   };
 
-  // Mobile Phone OTP login flow
+  // Mobile Phone OTP login step -> triggers SMS OTP dispatch
   const loginWithPhone = async (phone: string) => {
     const cleanPhone = phone.trim();
     if (cleanPhone.length < 8) {
@@ -142,7 +153,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const phoneUser: User = {
       id: `u_phone_${Date.now()}`,
-      name: `User ${cleanPhone.slice(-4)}`,
+      name: `Client ${cleanPhone.slice(-4)}`,
       email: `${cleanPhone.replace(/\D/g, '')}@mobile.kpr`,
       phone: cleanPhone,
       role: 'client'
@@ -153,8 +164,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setOtpType('phone');
     setIsOtpPending(true);
 
-    await sendRealOtpApi(cleanPhone, 'phone');
-    return { success: true, requiresOtp: true };
+    const otpResult = await sendRealMobileSmsOtp(cleanPhone);
+    setActiveOtpCode(otpResult.code);
+    setOtpDispatchMethod(otpResult.method);
+    setOtpSmsUri(otpResult.smsUri);
+
+    return { success: true, requiresOtp: true, message: otpResult.message };
   };
 
   // Google OAuth Login
@@ -165,7 +180,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const gUser: User = {
           id: res.user.id,
           name: res.user.user_metadata?.full_name || 'Google User',
-          email: res.user.email || 'google@user.com',
+          email: res.user.email || 'user.google@gmail.com',
           role: 'client',
           avatar: res.user.user_metadata?.avatar_url
         };
@@ -178,29 +193,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  // Verify OTP
   const verifyOtp = async (code: string, rememberDevice: boolean) => {
-    try {
-      const res = await verifyRealOtpApi(otpTarget, code, otpType);
-      if (res.success && pendingUser) {
-        if (rememberDevice) {
-          const thirtyDays = new Date();
-          thirtyDays.setDate(thirtyDays.getDate() + 30);
-          localStorage.setItem(`kpr_trusted_${pendingUser.email}`, thirtyDays.toISOString());
-        }
-        setUser(pendingUser);
-        setIsOtpPending(false);
-        setPendingUser(null);
-        return { success: true };
-      }
-      return { success: false, message: 'Verification failed.' };
-    } catch (err: any) {
-      return { success: false, message: err.message || 'Incorrect OTP code.' };
+    const verification = verifyActiveOtp(otpTarget, code);
+    if (!verification.success) {
+      return { success: false, message: verification.message };
     }
+
+    if (pendingUser) {
+      if (rememberDevice) {
+        const thirtyDays = new Date();
+        thirtyDays.setDate(thirtyDays.getDate() + 30);
+        localStorage.setItem(`kpr_trusted_${pendingUser.email}`, thirtyDays.toISOString());
+      }
+      setUser(pendingUser);
+      setIsOtpPending(false);
+      setPendingUser(null);
+      return { success: true };
+    }
+
+    return { success: false, message: 'Session expired. Please sign in again.' };
   };
 
   const cancelOtp = () => {
     setIsOtpPending(false);
     setPendingUser(null);
+    setActiveOtpCode('');
+    setOtpSmsUri(undefined);
+    setOtpDispatchMethod(undefined);
   };
 
   const logout = async () => {
@@ -229,6 +249,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         isOtpPending,
         otpTarget,
         otpType,
+        activeOtpCode,
+        otpSmsUri,
+        otpDispatchMethod,
         loginStep1,
         loginWithPhone,
         loginWithGoogle,
