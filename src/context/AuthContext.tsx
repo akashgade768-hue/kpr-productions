@@ -1,13 +1,16 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { User, UserRole } from '../types';
-import { sendOtpCodeApi } from '../lib/supabase';
+import { supabase, isSupabaseLive, signInWithGoogleApi, sendRealOtpApi, verifyRealOtpApi } from '../lib/supabase';
 
 interface AuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isOtpPending: boolean;
-  otpTargetEmail: string;
+  otpTarget: string;
+  otpType: 'email' | 'phone';
   loginStep1: (email: string, pass: string) => Promise<{ success: boolean; requiresOtp: boolean; message?: string }>;
+  loginWithPhone: (phone: string) => Promise<{ success: boolean; requiresOtp: boolean; message?: string }>;
+  loginWithGoogle: () => Promise<{ success: boolean; message?: string }>;
   verifyOtp: (code: string, rememberDevice: boolean) => Promise<{ success: boolean; message?: string }>;
   cancelOtp: () => void;
   logout: () => void;
@@ -16,7 +19,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Demo Default Users
 const DEMO_USERS: Record<string, User> = {
   'admin@kprproduction.com': {
     id: 'u_admin',
@@ -52,7 +54,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [isOtpPending, setIsOtpPending] = useState(false);
   const [pendingUser, setPendingUser] = useState<User | null>(null);
-  const [otpTargetEmail, setOtpTargetEmail] = useState('');
+  const [otpTarget, setOtpTarget] = useState('');
+  const [otpType, setOtpType] = useState<'email' | 'phone'>('email');
 
   useEffect(() => {
     if (user) {
@@ -62,14 +65,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
+  // Real Supabase Auth state listener
+  useEffect(() => {
+    if (!isSupabaseLive) return;
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (session?.user) {
+        const email = session.user.email || '';
+        const name = session.user.user_metadata?.full_name || email.split('@')[0] || 'Authenticated User';
+        const avatar = session.user.user_metadata?.avatar_url;
+
+        setUser({
+          id: session.user.id,
+          name,
+          email,
+          phone: session.user.phone,
+          role: email.includes('kprproduction.com') ? 'admin' : 'client',
+          avatar
+        });
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Email + Password login flow
   const loginStep1 = async (email: string, pass: string) => {
     const cleanEmail = email.trim().toLowerCase();
-    
-    // Check if demo user or matches patterns
     let foundUser = DEMO_USERS[cleanEmail];
-    
+
     if (!foundUser) {
-      // Dynamic fallback for newly invited clients/staff
       if (cleanEmail.includes('kprproduction.com')) {
         foundUser = {
           id: `u_${Date.now()}`,
@@ -94,43 +119,83 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Check trusted device token
     const trustedToken = localStorage.getItem(`kpr_trusted_${cleanEmail}`);
-    if (trustedToken) {
-      const expiry = new Date(trustedToken);
-      if (expiry > new Date()) {
-        // Skip OTP for trusted device
-        setUser(foundUser);
-        return { success: true, requiresOtp: false };
-      }
+    if (trustedToken && new Date(trustedToken) > new Date()) {
+      setUser(foundUser);
+      return { success: true, requiresOtp: false };
     }
 
-    // Require OTP Verification
     setPendingUser(foundUser);
-    setOtpTargetEmail(cleanEmail);
+    setOtpTarget(cleanEmail);
+    setOtpType('email');
     setIsOtpPending(true);
 
-    await sendOtpCodeApi(cleanEmail, 'email');
+    await sendRealOtpApi(cleanEmail, 'email');
     return { success: true, requiresOtp: true };
   };
 
+  // Mobile Phone OTP login flow
+  const loginWithPhone = async (phone: string) => {
+    const cleanPhone = phone.trim();
+    if (cleanPhone.length < 8) {
+      return { success: false, requiresOtp: false, message: 'Please enter a valid mobile phone number with country code.' };
+    }
+
+    const phoneUser: User = {
+      id: `u_phone_${Date.now()}`,
+      name: `User ${cleanPhone.slice(-4)}`,
+      email: `${cleanPhone.replace(/\D/g, '')}@mobile.kpr`,
+      phone: cleanPhone,
+      role: 'client'
+    };
+
+    setPendingUser(phoneUser);
+    setOtpTarget(cleanPhone);
+    setOtpType('phone');
+    setIsOtpPending(true);
+
+    await sendRealOtpApi(cleanPhone, 'phone');
+    return { success: true, requiresOtp: true };
+  };
+
+  // Google OAuth Login
+  const loginWithGoogle = async () => {
+    try {
+      const res: any = await signInWithGoogleApi();
+      if (res && 'user' in res && res.user) {
+        const gUser: User = {
+          id: res.user.id,
+          name: res.user.user_metadata?.full_name || 'Google User',
+          email: res.user.email || 'google@user.com',
+          role: 'client',
+          avatar: res.user.user_metadata?.avatar_url
+        };
+        setUser(gUser);
+        return { success: true };
+      }
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Google Authentication failed' };
+    }
+  };
+
   const verifyOtp = async (code: string, rememberDevice: boolean) => {
-    if (code !== '123456' && code.length !== 6) {
-      return { success: false, message: 'Incorrect OTP code. Enter 123456 for demo verification.' };
+    try {
+      const res = await verifyRealOtpApi(otpTarget, code, otpType);
+      if (res.success && pendingUser) {
+        if (rememberDevice) {
+          const thirtyDays = new Date();
+          thirtyDays.setDate(thirtyDays.getDate() + 30);
+          localStorage.setItem(`kpr_trusted_${pendingUser.email}`, thirtyDays.toISOString());
+        }
+        setUser(pendingUser);
+        setIsOtpPending(false);
+        setPendingUser(null);
+        return { success: true };
+      }
+      return { success: false, message: 'Verification failed.' };
+    } catch (err: any) {
+      return { success: false, message: err.message || 'Incorrect OTP code.' };
     }
-
-    if (!pendingUser) {
-      return { success: false, message: 'Session expired. Please sign in again.' };
-    }
-
-    if (rememberDevice) {
-      const thirtyDays = new Date();
-      thirtyDays.setDate(thirtyDays.getDate() + 30);
-      localStorage.setItem(`kpr_trusted_${pendingUser.email}`, thirtyDays.toISOString());
-    }
-
-    setUser(pendingUser);
-    setIsOtpPending(false);
-    setPendingUser(null);
-    return { success: true };
   };
 
   const cancelOtp = () => {
@@ -138,7 +203,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setPendingUser(null);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    if (isSupabaseLive) {
+      await supabase.auth.signOut();
+    }
     setUser(null);
     setIsOtpPending(false);
   };
@@ -159,8 +227,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         user,
         isAuthenticated: !!user,
         isOtpPending,
-        otpTargetEmail,
+        otpTarget,
+        otpType,
         loginStep1,
+        loginWithPhone,
+        loginWithGoogle,
         verifyOtp,
         cancelOtp,
         logout,
@@ -174,8 +245,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within AuthProvider');
   return context;
 };

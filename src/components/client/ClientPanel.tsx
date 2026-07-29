@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useData } from '../../context/DataContext';
+import { useToast } from '../ui/Toast';
 
 type ClientView = 'dashboard' | 'drive' | 'albums' | 'selections' | 'profile';
 
@@ -242,6 +243,7 @@ const AlbumsView: React.FC<{
   clientId: string;
 }> = ({ albums, selectedAlbumId, onSelectAlbum, clientId }) => {
   const data = useData();
+  const { showToast } = useToast();
   const selectedAlbum = albums.find(a => a.id === selectedAlbumId);
   const albumImages = selectedAlbumId ? data.getAlbumImages(selectedAlbumId) : [];
   const [currentPage, setCurrentPage] = useState(0);
@@ -333,7 +335,11 @@ const AlbumsView: React.FC<{
             {albumImages[currentPage] && (
               <>
                 <button
-                  onClick={() => data.toggleSelection(albumImages[currentPage].id, clientId)}
+                  onClick={() => {
+                    data.toggleSelection(albumImages[currentPage].id, clientId);
+                    const isFav = !data.selections.find(s => s.album_image_id === albumImages[currentPage].id && s.favorited);
+                    showToast(isFav ? 'Added to Selections ❤️' : 'Removed from Selections', isFav ? 'Photo saved to your print selection list' : 'Updated selection', isFav ? 'success' : 'info');
+                  }}
                   className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-all ${
                     data.selections.find(s => s.album_image_id === albumImages[currentPage].id && s.favorited)
                       ? 'bg-red-500/20 text-red-400 border border-red-500/30'
@@ -395,6 +401,7 @@ const AlbumsView: React.FC<{
 // ── Selections View ──
 const SelectionsView: React.FC<{ clientId: string }> = ({ clientId }) => {
   const { selections, albumImages, submitSelections } = useData();
+  const { showToast } = useToast();
   const clientSelections = selections.filter(s => s.client_id === clientId && s.favorited);
   const selectedImages = albumImages.filter(img => clientSelections.some(s => s.album_image_id === img.id));
   const allSubmitted = clientSelections.every(s => s.status === 'Submitted');
@@ -410,7 +417,10 @@ const SelectionsView: React.FC<{ clientId: string }> = ({ clientId }) => {
           <motion.button
             whileHover={{ scale: 1.05 }}
             whileTap={{ scale: 0.95 }}
-            onClick={() => submitSelections('alb1', clientId)}
+            onClick={() => {
+              submitSelections('alb1', clientId);
+              showToast('Selections Submitted! ✨', 'Studio team notified of your selected photos', 'success');
+            }}
             className="flex items-center gap-2 px-6 py-2.5 bg-gold-gradient rounded-xl text-black text-sm font-semibold"
           >
             <Send size={16} /> Submit to Studio
