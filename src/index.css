@@ -1,0 +1,112 @@
+@import "tailwindcss";
+
+@theme {
+  --color-dark-bg: #070709;
+  --color-dark-card: #0F0F16;
+  --color-dark-elevated: #171722;
+  --color-dark-border: #242436;
+
+  --color-gold-50: #FFFDF0;
+  --color-gold-100: #FFF9C2;
+  --color-gold-200: #FFF185;
+  --color-gold-300: #FFE247;
+  --color-gold-400: #F0C71D;
+  --color-gold-500: #D4AF37;
+  --color-gold-600: #AA8522;
+  --color-gold-700: #805F16;
+  --color-gold-800: #5A4110;
+  --color-gold-900: #3D2A09;
+
+  --color-bronze-400: #E2B857;
+  --color-bronze-500: #C4942A;
+  --color-bronze-600: #997116;
+
+  --font-serif: 'Playfair Display', Georgia, serif;
+  --font-sans: 'Plus Jakarta Sans', Inter, sans-serif;
+  --font-cinematic: 'Cinzel', serif;
+
+  --animate-pulse-glow: pulseGlow 3s infinite ease-in-out;
+  --animate-float: float 6s infinite ease-in-out;
+
+  @keyframes pulseGlow {
+    0%, 100% { opacity: 0.6; filter: drop-shadow(0 0 15px rgba(212, 175, 55, 0.3)); }
+    50% { opacity: 1; filter: drop-shadow(0 0 30px rgba(212, 175, 55, 0.7)); }
+  }
+
+  @keyframes float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+  }
+}
+
+@layer base {
+  body {
+    background-color: var(--color-dark-bg);
+    color: #E2E8F0;
+    font-family: var(--font-sans);
+  }
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #070709;
+}
+::-webkit-scrollbar-thumb {
+  background: #242436;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #D4AF37;
+}
+
+/* Glassmorphism utilities */
+.glass-panel {
+  background: rgba(15, 15, 22, 0.75);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.glass-card-gold {
+  background: linear-gradient(135deg, rgba(212, 175, 55, 0.08) 0%, rgba(15, 15, 22, 0.6) 100%);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(212, 175, 55, 0.25);
+}
+
+.text-gold-gradient {
+  background: linear-gradient(135deg, #FFF185 0%, #D4AF37 50%, #997520 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.bg-gold-gradient {
+  background: linear-gradient(135deg, #F5D77F 0%, #D4AF37 50%, #997520 100%);
+}
+
+.gold-glow {
+  box-shadow: 0 0 25px rgba(212, 175, 55, 0.25);
+}
+
+.gold-border-glow:hover {
+  border-color: rgba(212, 175, 55, 0.7);
+  box-shadow: 0 0 20px rgba(212, 175, 55, 0.2);
+}
+
+/* 3D Realistic Flipbook Page Shadow & Curvature */
+.flipbook-container {
+  perspective: 2000px;
+}
+
+.flipbook-page {
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), inset 0 0 30px rgba(0, 0, 0, 0.2);
+  transition: transform 0.6s cubic-bezier(0.645, 0.045, 0.355, 1);
+  transform-style: preserve-3d;
+}
+
+.flipbook-page-spine {
+  box-shadow: inset -15px 0 20px -10px rgba(0,0,0,0.6);
+}
